@@ -1,36 +1,166 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# 🛒 Smart Grocery Shopping App
 
-## Getting Started
+An AI-powered grocery shopping application that takes natural language shopping lists and returns matched REWE products with URLs and smart quantity calculations.
 
-First, run the development server:
+## Features
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+- **AI-Powered Parsing**: Understands natural language shopping lists with quantities, attributes (organic, fresh, etc.)
+- **Multi-Tier Search**: Uses sophisticated 3-tier search strategy (exact → category → alternatives)
+- **Smart Matching**: Category filtering prevents wrong matches (fresh vs. canned products)
+- **Quantity Calculation**: Intelligent quantity calculations considering package sizes and perishability
+- **Quality Filtering**: LLM-powered quality assessment and re-ranking of product matches
+- **German Translation**: Automatically translates items to German for REWE product matching
+
+## Technology Stack
+
+- **Frontend**: Next.js 15 with TypeScript and Tailwind CSS
+- **AI**: OpenAI GPT-4o-mini for parsing and quality filtering
+- **Data**: 5000+ REWE products with categories, prices, and URLs
+- **Architecture**: Full-stack Next.js with API routes
+
+## Quick Start
+
+1. **Install dependencies**:
+   ```bash
+   npm install
+   ```
+
+2. **Set up environment variables**:
+   ```bash
+   cp .env.example .env.local
+   # Add your OpenAI API key to .env.local
+   ```
+
+3. **Add your REWE products data**:
+   - Place your `rewe_all_products.json` file in the `src/data/` directory
+   - Or place it in the root directory
+   - The app will automatically load it on startup
+
+4. **Run the development server**:
+   ```bash
+   npm run dev
+   ```
+
+5. **Open [http://localhost:3000](http://localhost:3000)** in your browser
+
+## Usage
+
+1. Enter your shopping list in natural language, for example:
+   ```
+   2 avocados
+   250g cherry tomatoes
+   whole wheat pasta
+   organic milk
+   firm tofu
+   ```
+
+2. Click "Find Products" to process your list
+
+3. View the matched REWE products with:
+   - Direct purchase URLs
+   - Calculated quantities and prices
+   - Match quality indicators
+   - Alternative options
+
+## How It Works
+
+### 1. AI Parsing
+The system uses OpenAI to parse your natural language shopping list, extracting:
+- Base item names (translated to German)
+- Quantities and units
+- Specific attributes (organic, whole wheat, fresh, etc.)
+- Item categorization for smart matching
+
+### 2. Multi-Tier Search
+Products are found using a sophisticated 3-tier search:
+- **Tier 1**: Exact/specific matches with all attributes
+- **Tier 2**: Category-level matches without qualifiers
+- **Tier 3**: Alternative/substitute products
+
+### 3. Category Filtering
+Each search tier includes strict category filtering to prevent incorrect matches:
+- Fresh produce → "Obst & Gemüse"
+- Canned goods → "Fertiggerichte & Konserven"
+- Dairy → "Käse, Eier & Molkerei"
+- etc.
+
+### 4. Smart Scoring
+Products are scored based on:
+- Keyword matches (exact word, compound word, substring)
+- Tier weighting (3x for tier1, 1.5x for tier2, 0.8x for tier3)
+- Attribute bonuses (bio, vollkorn, fresh, etc.)
+- Size appropriateness
+
+### 5. Quality Filtering
+An AI quality filter evaluates candidates and re-ranks them based on:
+- Attribute matching accuracy
+- Package size appropriateness  
+- Fresh vs. processed preference
+- Category correctness
+
+### 6. Quantity Calculation
+Intelligent quantity calculation considers:
+- Package sizes and unit conversions
+- Perishability factors
+- Economic efficiency
+- Practical usage patterns
+
+## Data Format
+
+Your `rewe_all_products.json` should contain an array of products:
+
+```json
+[
+  {
+    "category": "Obst & Gemüse",
+    "title": "Bio Avocados, 2 Stück",
+    "price": 2.99,
+    "volume": "2 Stück",
+    "url": "https://shop.rewe.de/p/bio-avocados-2-stueck/1234567"
+  }
+]
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Environment Variables
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```env
+OPENAI_API_KEY=your_openai_api_key_here
+NODE_ENV=development
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Development
 
-## Learn More
+- `npm run dev` - Start development server
+- `npm run build` - Build for production  
+- `npm run start` - Start production server
+- `npm run lint` - Run ESLint
 
-To learn more about Next.js, take a look at the following resources:
+## Authentication & Saved Lists
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+This app includes user authentication and the ability to save shopping lists:
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- **Authentication**: Email/password login using Supabase Auth
+- **Saved Lists**: Store and manage multiple shopping lists in the database
+- **User Management**: Secure user sessions with Row Level Security
 
-## Deploy on Vercel
+### Setup Authentication
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+1. Follow instructions in `SUPABASE_SETUP.md` to configure your Supabase database
+2. Set up the required environment variables
+3. Deploy using the instructions in `DEPLOYMENT.md`
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Deployment
+
+This app is ready for deployment on Vercel with GitHub integration.
+
+📖 **See `DEPLOYMENT.md` for complete deployment instructions**
+
+Key deployment features:
+- Automatic GitHub integration
+- Environment variable configuration
+- Production-ready build settings
+- Custom domain support
+
+## Contributing
+
+This application is based on sophisticated AI-powered grocery matching logic. The core algorithms include multi-tier search, category filtering, and intelligent quantity calculations designed specifically for German grocery shopping.
