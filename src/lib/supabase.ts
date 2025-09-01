@@ -18,6 +18,6 @@ export interface ShoppingList {
 export interface ProcessedResult {
   id: string
   list_id: string
-  result_data: any
+  result_data: Record<string, unknown>
   created_at: string
 }

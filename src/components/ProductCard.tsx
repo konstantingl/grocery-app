@@ -10,7 +10,7 @@ interface ProductCardProps {
   onSelectAlternative?: (product: Product) => void
 }
 
-export default function ProductCard({ item, index, alternatives = [], onSelectAlternative }: ProductCardProps) {
+export default function ProductCard({ item, index: _index, alternatives = [], onSelectAlternative }: ProductCardProps) {
   const [showAlternatives, setShowAlternatives] = useState(false)
 
   const formatPrice = (price: number) => `€${price.toFixed(2)}`

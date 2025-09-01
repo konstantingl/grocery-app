@@ -50,7 +50,7 @@ export default function ResultsDisplay({ results }: ResultsDisplayProps) {
               
               if (results.candidatesConsidered) {
                 // Try to find alternatives by looking for entries where the selected product matches
-                const matchingEntry = Object.entries(results.candidatesConsidered).find(([originalText, candidates]) => {
+                const matchingEntry = Object.entries(results.candidatesConsidered).find(([_originalText, candidates]) => {
                   // Check if any candidate in this entry matches our selected item
                   return candidates.some(candidate => 
                     candidate.product.title === item.product.title ||

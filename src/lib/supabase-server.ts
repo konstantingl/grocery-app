@@ -13,10 +13,10 @@ export const createClient = (request: NextRequest) => {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       cookies: {
-        get(name: string) {
+        get(_name: string) {
           return request.cookies.get(name)?.value
         },
-        set(name: string, value: string, options: any) {
+        set(name: string, value: string, options: Record<string, unknown>) {
           request.cookies.set({
             name,
             value,
@@ -33,7 +33,7 @@ export const createClient = (request: NextRequest) => {
             ...options,
           })
         },
-        remove(name: string, options: any) {
+        remove(_name: string, _options: Record<string, unknown>) {
           request.cookies.set({
             name,
             value: '',
@@ -63,14 +63,14 @@ export const createServerSupabaseClient = () => {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       cookies: {
-        get(name: string) {
+        get(_name: string) {
           // This will be used in API routes
           return ''
         },
-        set(name: string, value: string, options: any) {
+        set(name: string, value: string, options: Record<string, unknown>) {
           // No-op in API routes
         },
-        remove(name: string, options: any) {
+        remove(_name: string, _options: Record<string, unknown>) {
           // No-op in API routes
         },
       },
