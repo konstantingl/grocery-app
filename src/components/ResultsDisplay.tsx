@@ -1,6 +1,6 @@
 'use client';
 
-import type { ShoppingResult } from '@/types';
+import type { ShoppingResult, Product } from '@/types';
 import ProductCard from '@/components/ProductCard';
 
 interface ResultsDisplayProps {

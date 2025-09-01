@@ -16,7 +16,7 @@ export const createClient = (request: NextRequest) => {
         get(_name: string) {
           return request.cookies.get(name)?.value
         },
-        set(name: string, value: string, options: Record<string, unknown>) {
+        set(_name: string, _value: string, _options: Record<string, unknown>) {
           request.cookies.set({
             name,
             value,
@@ -67,7 +67,7 @@ export const createServerSupabaseClient = () => {
           // This will be used in API routes
           return ''
         },
-        set(name: string, value: string, options: Record<string, unknown>) {
+        set(_name: string, _value: string, _options: Record<string, unknown>) {
           // No-op in API routes
         },
         remove(_name: string, _options: Record<string, unknown>) {
