@@ -155,6 +155,8 @@ This app is ready for deployment on Vercel with GitHub integration.
 
 📖 **See `DEPLOYMENT.md` for complete deployment instructions**
 
+🚀 **Live Demo:** Ready for deployment on Vercel
+
 Key deployment features:
 - Automatic GitHub integration
 - Environment variable configuration
