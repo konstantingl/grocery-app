@@ -7,5 +7,8 @@
     "src/app/api/*/route.ts": {
       "maxDuration": 30
     }
+  },
+  "github": {
+    "autoDeployBranch": "main"
   }
 }
