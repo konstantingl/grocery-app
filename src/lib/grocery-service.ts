@@ -151,20 +151,154 @@ export class GroceryService {
   }
 
   /**
-   * Fallback parsing for when AI fails
+   * Enhanced fallback parsing for when AI fails
+   * Extracts meaningful product names from complex shopping list items
    */
   private fallbackParse(shoppingList: string): ShoppingItem[] {
     const lines = shoppingList.trim().split('\n').filter(line => line.trim());
     
-    return lines.map(line => ({
-      item: line.trim(),
-      amount: 1,
-      unit: 'stück',
-      originalText: line.trim(),
-      attributes: [],
-      alternatives: [],
-      itemType: 'unknown' as const
-    }));
+    return lines.map(line => {
+      const originalText = line.trim();
+      
+      // Enhanced parsing to extract clean product names
+      const parsed = this.parseShoppingItemManually(originalText);
+      
+      return {
+        item: parsed.cleanName,
+        amount: parsed.amount,
+        unit: parsed.unit,
+        originalText,
+        attributes: parsed.attributes,
+        alternatives: parsed.alternatives,
+        itemType: parsed.itemType
+      };
+    });
+  }
+
+  /**
+   * Manual parsing to extract clean product names from complex items
+   */
+  private parseShoppingItemManually(text: string): {
+    cleanName: string;
+    amount: number;
+    unit: string;
+    attributes: string[];
+    alternatives: string[];
+    itemType: ShoppingItem['itemType'];
+  } {
+    let cleanName = text.toLowerCase();
+    const attributes: string[] = [];
+    const alternatives: string[] = [];
+    let amount = 1;
+    let unit = 'stück';
+    let itemType: ShoppingItem['itemType'] = 'unknown';
+
+    // Extract amount and unit (e.g., "420 g", "1,2 kg", "270 ml")
+    const amountMatch = text.match(/(\d+(?:[,.]\d+)?)\s*(g|kg|ml|l|oz|lb|stück|slices?)\b/i);
+    if (amountMatch) {
+      amount = parseFloat(amountMatch[1].replace(',', '.'));
+      unit = amountMatch[2].toLowerCase();
+      
+      // Convert units to standard German units
+      if (unit === 'lb') { amount *= 453.592; unit = 'g'; }
+      if (unit === 'oz') { amount *= 28.3495; unit = 'g'; }
+      if (unit === 'slices' || unit === 'slice') { unit = 'stück'; }
+    }
+
+    // Remove measurements and parenthetical info
+    cleanName = cleanName
+      .replace(/\d+(?:[,.]\d+)?\s*(?:g|kg|ml|l|oz|lb|fl oz|stück|slices?)\b/gi, '') // Remove measurements
+      .replace(/\([^)]*\)/g, '') // Remove parentheses content
+      .replace(/\/[^\/]*$/, '') // Remove trailing alternatives like "/ 4,9 oz"
+      .replace(/\d+\s*["']\s*\(\d+cm\)/gi, '') // Remove size descriptions like 8" (20cm)
+      .replace(/^(\d+)\s+/, '') // Remove leading numbers
+      .trim();
+
+    // Extract attributes
+    if (text.toLowerCase().includes('fresh')) attributes.push('fresh');
+    if (text.toLowerCase().includes('organic') || text.toLowerCase().includes('bio')) attributes.push('bio');
+    if (text.toLowerCase().includes('whole wheat') || text.toLowerCase().includes('vollkorn')) attributes.push('vollkorn');
+    if (text.toLowerCase().includes('lite') || text.toLowerCase().includes('light')) attributes.push('light');
+    if (text.toLowerCase().includes('firm')) attributes.push('firm');
+    if (text.toLowerCase().includes('frozen')) attributes.push('frozen');
+
+    // Extract alternatives from parentheses
+    const altMatch = text.match(/\(([^)]+)\)/);
+    if (altMatch) {
+      const altText = altMatch[1].toLowerCase();
+      // Common alternative patterns
+      if (altText.includes('aubergine')) alternatives.push('aubergine');
+      if (altText.includes('coriander')) alternatives.push('coriander');
+      if (altText.includes('passata')) alternatives.push('passata');
+    }
+
+    // Determine item type based on keywords
+    const itemLower = cleanName.toLowerCase();
+    if (['cucumber', 'eggplant', 'aubergine', 'lettuce', 'onion', 'spinach', 'tomato', 'cilantro', 'coriander', 'peas'].some(k => itemLower.includes(k))) {
+      itemType = 'fresh_produce';
+    } else if (['salmon', 'fish', 'fillet', 'tofu'].some(k => itemLower.includes(k))) {
+      itemType = 'meat';
+    } else if (['cheese', 'cheddar', 'feta', 'mozzarella'].some(k => itemLower.includes(k))) {
+      itemType = 'dairy';
+    } else if (['couscous', 'lasagna', 'pasta', 'bread', 'tortilla'].some(k => itemLower.includes(k))) {
+      itemType = 'dry_goods';
+    } else if (['milk', 'coconut milk'].some(k => itemLower.includes(k))) {
+      itemType = 'dairy';
+    } else if (['salt', 'honey', 'tahini', 'curry paste', 'sauce'].some(k => itemLower.includes(k))) {
+      itemType = 'condiments';
+    }
+
+    // Clean up the name further
+    cleanName = cleanName
+      .replace(/\bsea\s+/gi, '') // Remove "sea" from "sea salt"
+      .replace(/\bthai\s+red\s+/gi, '') // Remove "thai red" from "thai red curry paste"
+      .replace(/\bwhole\s+wheat\s+/gi, '') // Remove "whole wheat" prefix
+      .replace(/\s+/g, ' ') // Normalize spaces
+      .trim();
+
+    // Use German translations for common items
+    const translations: Record<string, string> = {
+      'cucumber': 'gurke',
+      'eggplant': 'aubergine',
+      'lettuce': 'salat',
+      'onions': 'zwiebeln',
+      'onion': 'zwiebel', 
+      'red onion': 'rote zwiebel',
+      'spinach': 'spinat',
+      'tomatoes': 'tomaten',
+      'tomato': 'tomate',
+      'cilantro': 'koriander',
+      'salmon fillet': 'lachs',
+      'salmon': 'lachs',
+      'cheddar cheese': 'cheddar',
+      'feta cheese': 'feta',
+      'mozzarella': 'mozzarella',
+      'hummus': 'hummus',
+      'tofu': 'tofu',
+      'couscous': 'couscous',
+      'lasagna sheets': 'lasagne',
+      'coconut milk': 'kokosmilch',
+      'salt': 'salz',
+      'honey': 'honig',
+      'tahini': 'tahini',
+      'curry paste': 'curry paste',
+      'tomato sauce': 'tomatensoße',
+      'bread': 'brot',
+      'tortillas': 'tortilla',
+      'aluminum foil': 'alufolie',
+      'peas': 'erbsen'
+    };
+
+    const translated = translations[cleanName] || cleanName;
+    
+    return {
+      cleanName: translated,
+      amount,
+      unit,
+      attributes,
+      alternatives,
+      itemType
+    };
   }
 
   /**
@@ -1114,86 +1248,155 @@ export class GroceryService {
   }
 
   /**
-   * Simple quantity calculation without AI
+   * Enhanced quantity calculation without AI - handles unit conversions properly
    */
   private calculateQuantitySimple(item: ShoppingItem, candidate: { product: Product; score: number; tier: string }): ProductMatch | null {
     try {
       const { product } = candidate;
       
-      // Parse product volume
-      const productVolume = this.volumeParser.parseVolume(product.volume);
+      // Parse product volume with enhanced parsing
+      const productVolume = this.volumeParser.parseVolume(product.volume) || this.parseVolumeFromTitle(product.title);
       
       if (!productVolume || productVolume.amount === 0) {
-        // No volume info - assume 1 unit needed
+        // For items without clear volume (like "1 Stück"), assume reasonable quantity
+        const reasonableQuantity = this.getReasonableQuantityForProduct(product, item);
+        return {
+          product,
+          unitsNeeded: reasonableQuantity.units,
+          actualAmount: reasonableQuantity.amount,
+          actualUnit: reasonableQuantity.unit,
+          totalPrice: reasonableQuantity.units * product.price,
+          confidence: candidate.score,
+          matchTier: candidate.tier,
+          matchReasoning: `Smart calculation: ${reasonableQuantity.units} units = ${reasonableQuantity.amount}${reasonableQuantity.unit}`
+        };
+      }
+
+      // Convert both amounts to grams for universal comparison
+      const targetGrams = this.convertToGrams(item.amount, item.unit);
+      const productGrams = this.convertToGrams(productVolume.amount, productVolume.unit);
+      
+      if (!targetGrams || !productGrams) {
+        // Fallback for non-convertible units
         return {
           product,
           unitsNeeded: 1,
-          actualAmount: 1,
-          actualUnit: 'stück',
+          actualAmount: productVolume.amount,
+          actualUnit: productVolume.unit,
           totalPrice: product.price,
           confidence: candidate.score,
           matchTier: candidate.tier,
-          matchReasoning: 'Deterministic calculation: 1 units = 1stück'
+          matchReasoning: `Fallback: 1 unit = ${productVolume.amount}${productVolume.unit}`
         };
       }
 
-      // Simple unit conversion and calculation
-      const targetAmount = item.amount;
-      const targetUnit = item.unit;
-      const productAmount = productVolume.amount;
-      const productUnit = productVolume.unit;
-
-      // Direct unit match
-      if (targetUnit === productUnit) {
-        const unitsNeeded = Math.max(1, Math.ceil(targetAmount / productAmount));
-        return {
-          product,
-          unitsNeeded,
-          actualAmount: unitsNeeded * productAmount,
-          actualUnit: productUnit,
-          totalPrice: unitsNeeded * product.price,
-          confidence: candidate.score,
-          matchTier: candidate.tier,
-          matchReasoning: `Deterministic calculation: ${unitsNeeded} units = ${unitsNeeded * productAmount}${productUnit}`
-        };
+      // Calculate units needed
+      const unitsNeeded = Math.max(1, Math.ceil(targetGrams / productGrams));
+      
+      // Avoid unreasonable quantities (more than 10 units usually indicates an error)
+      const finalUnitsNeeded = Math.min(unitsNeeded, 10);
+      
+      // Calculate final amount in appropriate unit
+      let finalAmount = finalUnitsNeeded * productVolume.amount;
+      let finalUnit = productVolume.unit;
+      
+      // Convert to more readable units if needed
+      if (finalUnit === 'g' && finalAmount >= 1000) {
+        finalAmount = finalAmount / 1000;
+        finalUnit = 'kg';
+      } else if (finalUnit === 'ml' && finalAmount >= 1000) {
+        finalAmount = finalAmount / 1000;
+        finalUnit = 'l';
       }
-
-      // Simple unit conversions
-      let convertedProductAmount = productAmount;
-      let convertedTargetAmount = targetAmount;
-
-      // kg to g
-      if (productUnit === 'kg' && targetUnit === 'g') {
-        convertedProductAmount *= 1000;
-      } else if (productUnit === 'g' && targetUnit === 'kg') {
-        convertedTargetAmount *= 1000;
-      }
-      // l to ml  
-      else if (productUnit === 'l' && targetUnit === 'ml') {
-        convertedProductAmount *= 1000;
-      } else if (productUnit === 'ml' && targetUnit === 'l') {
-        convertedTargetAmount *= 1000;
-      }
-
-      const unitsNeeded = Math.max(1, Math.ceil(convertedTargetAmount / convertedProductAmount));
-      const finalAmount = unitsNeeded * convertedProductAmount;
-      const finalUnit = productUnit === 'kg' || targetUnit === 'g' ? 'g' : 
-                       productUnit === 'l' || targetUnit === 'ml' ? 'ml' : productUnit;
 
       return {
         product,
-        unitsNeeded,
+        unitsNeeded: finalUnitsNeeded,
         actualAmount: finalAmount,
         actualUnit: finalUnit,
-        totalPrice: unitsNeeded * product.price,
+        totalPrice: finalUnitsNeeded * product.price,
         confidence: candidate.score,
         matchTier: candidate.tier,
-        matchReasoning: `Deterministic calculation: ${unitsNeeded} units = ${finalAmount}${finalUnit}`
+        matchReasoning: `Enhanced calculation: ${finalUnitsNeeded} units = ${finalAmount}${finalUnit}`
       };
 
     } catch (error) {
-      console.error('❌ Simple quantity calculation failed:', error);
-      return null;
+      console.error('❌ Enhanced quantity calculation failed:', error);
+      // Fallback to basic calculation
+      return {
+        product: candidate.product,
+        unitsNeeded: 1,
+        actualAmount: 1,
+        actualUnit: 'stück',
+        totalPrice: candidate.product.price,
+        confidence: candidate.score,
+        matchTier: candidate.tier,
+        matchReasoning: 'Basic fallback: 1 unit'
+      };
+    }
+  }
+
+  /**
+   * Parse volume from product title when volume field is unclear
+   */
+  private parseVolumeFromTitle(title: string): { amount: number; unit: string } | null {
+    // Look for patterns like "500g", "1kg", "250ml", "1L", "2 Stück" in title
+    const volumeMatch = title.match(/(\d+(?:[,.]\d+)?)\s*(g|kg|ml|l|stück)\b/i);
+    if (volumeMatch) {
+      return {
+        amount: parseFloat(volumeMatch[1].replace(',', '.')),
+        unit: volumeMatch[2].toLowerCase()
+      };
+    }
+    return null;
+  }
+
+  /**
+   * Get reasonable quantity for products without clear volume info
+   */
+  private getReasonableQuantityForProduct(product: Product, item: ShoppingItem): { units: number; amount: number; unit: string } {
+    const title = product.title.toLowerCase();
+    
+    // For "1 Stück" items, usually need 1 unit regardless of requested amount
+    if (title.includes('1 stück') || title.includes('stück')) {
+      // For vegetables/fruits that are typically sold by piece
+      if (product.category === 'Obst & Gemüse') {
+        return { units: 1, amount: 1, unit: 'stück' };
+      }
+    }
+    
+    // For items with unclear volumes, try to extract from title or make reasonable assumptions
+    const titleVolume = this.parseVolumeFromTitle(title);
+    if (titleVolume) {
+      const targetGrams = this.convertToGrams(item.amount, item.unit);
+      const productGrams = this.convertToGrams(titleVolume.amount, titleVolume.unit);
+      
+      if (targetGrams && productGrams) {
+        const units = Math.min(Math.max(1, Math.ceil(targetGrams / productGrams)), 5);
+        return { 
+          units, 
+          amount: units * titleVolume.amount, 
+          unit: titleVolume.unit 
+        };
+      }
+    }
+    
+    // Default fallback
+    return { units: 1, amount: 1, unit: 'stück' };
+  }
+
+  /**
+   * Convert various units to grams for universal comparison
+   */
+  private convertToGrams(amount: number, unit: string): number | null {
+    switch (unit.toLowerCase()) {
+      case 'g': return amount;
+      case 'kg': return amount * 1000;
+      case 'ml': return amount; // Assume 1ml = 1g for most food items
+      case 'l': return amount * 1000;
+      case 'oz': return amount * 28.3495;
+      case 'lb': return amount * 453.592;
+      default: return null; // Can't convert units like "stück"
     }
   }
 
