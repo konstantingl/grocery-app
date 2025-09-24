@@ -10,9 +10,47 @@ import type {
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
+  timeout: 15000, // 15 second timeout
 });
 
 export class OpenAIClient {
+  /**
+   * Retry wrapper for OpenAI calls with exponential backoff
+   */
+  private static async retryWithBackoff<T>(
+    operation: () => Promise<T>,
+    maxRetries: number = 2,
+    initialDelay: number = 1000
+  ): Promise<T> {
+    let lastError: Error;
+    
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        return await operation();
+      } catch (error) {
+        lastError = error as Error;
+        
+        if (attempt === maxRetries) {
+          break;
+        }
+        
+        // Don't retry on certain errors
+        if (error instanceof Error && 
+            (error.message.includes('Invalid API key') || 
+             error.message.includes('rate limit') ||
+             error.message.includes('quota'))) {
+          break;
+        }
+        
+        const delay = initialDelay * Math.pow(2, attempt);
+        console.warn(`OpenAI call failed (attempt ${attempt + 1}/${maxRetries + 1}), retrying in ${delay}ms:`, error);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+    
+    throw lastError;
+  }
+
   /**
    * Parse shopping list using LLM for intelligent extraction
    */
@@ -42,42 +80,44 @@ Example:
 - item_type: "dry_goods"
 `;
 
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [{ role: "user", content: prompt }],
-      response_format: {
-        type: "json_schema",
-        json_schema: {
-          name: "parsed_shopping_list",
-          schema: {
-            type: "object",
-            properties: {
-              items: {
-                type: "array",
+    const response = await this.retryWithBackoff(() => 
+      openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [{ role: "user", content: prompt }],
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: "parsed_shopping_list",
+            schema: {
+              type: "object",
+              properties: {
                 items: {
-                  type: "object",
-                  properties: {
-                    item: { type: "string", description: "Base item in German" },
-                    amount: { type: "number", description: "Quantity needed" },
-                    unit: { type: "string", enum: ["g", "kg", "ml", "l", "stück"] },
-                    original: { type: "string", description: "Original text" },
-                    attributes: { type: "array", items: { type: "string" } },
-                    alternatives: { type: "array", items: { type: "string" } },
-                    item_type: {
-                      type: "string",
-                      enum: ["fresh_produce", "dry_goods", "dairy", "meat", "herbs_spices", "canned", "condiments"]
-                    }
-                  },
-                  required: ["item", "amount", "unit", "original", "item_type"]
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      item: { type: "string", description: "Base item in German" },
+                      amount: { type: "number", description: "Quantity needed" },
+                      unit: { type: "string", enum: ["g", "kg", "ml", "l", "stück"] },
+                      original: { type: "string", description: "Original text" },
+                      attributes: { type: "array", items: { type: "string" } },
+                      alternatives: { type: "array", items: { type: "string" } },
+                      item_type: {
+                        type: "string",
+                        enum: ["fresh_produce", "dry_goods", "dairy", "meat", "herbs_spices", "canned", "condiments"]
+                      }
+                    },
+                    required: ["item", "amount", "unit", "original", "item_type"]
+                  }
                 }
-              }
-            },
-            required: ["items"]
+              },
+              required: ["items"]
+            }
           }
-        }
-      },
-      temperature: 0.1
-    });
+        },
+        temperature: 0.1
+      })
+    );
 
     const responseContent = response.choices[0].message.content;
     if (!responseContent) {
@@ -119,30 +159,32 @@ Critical rules:
 Return 1-2 most appropriate category names exactly as shown above.
 `;
 
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [{ role: "user", content: prompt }],
-      response_format: {
-        type: "json_schema",
-        json_schema: {
-          name: "category_selection",
-          schema: {
-            type: "object",
-            properties: {
-              categories: {
-                type: "array",
-                items: { type: "string" },
-                minItems: 1,
-                maxItems: 2
+    const response = await this.retryWithBackoff(() =>
+      openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [{ role: "user", content: prompt }],
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: "category_selection",
+            schema: {
+              type: "object",
+              properties: {
+                categories: {
+                  type: "array",
+                  items: { type: "string" },
+                  minItems: 1,
+                  maxItems: 2
+                },
+                reasoning: { type: "string" }
               },
-              reasoning: { type: "string" }
-            },
-            required: ["categories", "reasoning"]
+              required: ["categories", "reasoning"]
+            }
           }
-        }
-      },
-      temperature: 0.1
-    });
+        },
+        temperature: 0.1
+      })
+    );
 
     const responseContent = response.choices[0].message.content;
     if (!responseContent) {
@@ -187,29 +229,47 @@ Critical examples for spelling variants:
 "zucchini" → Include BOTH "zucchini" AND "zuchini"
 "paprika" → Include BOTH "paprika" AND "pepper"
 
+Examples:
+"firm tofu" → 
+Tier 1: ["fester tofu", "tofu fest", "natur tofu fest", "firm tofu", "naturtofu fest", "tofu natur fest"]
+Tier 2: ["tofu", "soja tofu", "naturtofu", "bio tofu", "tofu bio", "sojatorfu"]
+Tier 3: ["seitan", "tempeh", "soja protein"]
+
+"broccoli florets" →
+Tier 1: ["broccoli röschen", "brokkoli röschen", "frischer broccoli", "frischer brokkoli", "bio broccoli röschen", "bio brokkoli röschen"] 
+Tier 2: ["broccoli", "brokkoli", "broccoli frisch", "brokkoli frisch", "broccoli köpfe", "brokkoli köpfe"]
+Tier 3: ["blumenkohl röschen", "romanesco", "grünkohl"]
+
+"green onion" (spring onion/scallion) →
+Tier 1: ["lauchzwiebeln", "frühlingszwiebeln", "green onion", "spring onion", "scallion", "lauch zwiebeln"]
+Tier 2: ["zwiebeln", "lauch", "onion", "zwiebel", "grün zwiebel"]
+Tier 3: ["schnittlauch", "porree", "chives"]
+
 Item to process: "${item}"${attributesStr}
 `;
 
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [{ role: "user", content: prompt }],
-      response_format: {
-        type: "json_schema",
-        json_schema: {
-          name: "search_tiers",
-          schema: {
-            type: "object",
-            properties: {
-              tier1: { type: "array", items: { type: "string" }, maxItems: 6 },
-              tier2: { type: "array", items: { type: "string" }, maxItems: 6 },
-              tier3: { type: "array", items: { type: "string" }, maxItems: 4 }
-            },
-            required: ["tier1", "tier2", "tier3"]
+    const response = await this.retryWithBackoff(() =>
+      openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [{ role: "user", content: prompt }],
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: "search_tiers",
+            schema: {
+              type: "object",
+              properties: {
+                tier1: { type: "array", items: { type: "string" }, maxItems: 6 },
+                tier2: { type: "array", items: { type: "string" }, maxItems: 6 },
+                tier3: { type: "array", items: { type: "string" }, maxItems: 4 }
+              },
+              required: ["tier1", "tier2", "tier3"]
+            }
           }
-        }
-      },
-      temperature: 0.1
-    });
+        },
+        temperature: 0.1
+      })
+    );
 
     const responseContent = response.choices[0].message.content;
     if (!responseContent) {
@@ -267,40 +327,42 @@ STRONGLY REJECT:
 Return indices of best candidates in preference order with brief reasoning for each.
 `;
 
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [{ role: "user", content: prompt }],
-      response_format: {
-        type: "json_schema",
-        json_schema: {
-          name: "quality_filter",
-          schema: {
-            type: "object",
-            properties: {
-              selectedCandidates: {
-                type: "array",
-                items: {
-                  type: "object",
-                  properties: {
-                    index: { type: "integer", minimum: 0 },
-                    reasoning: { type: "string" }
+    const response = await this.retryWithBackoff(() =>
+      openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [{ role: "user", content: prompt }],
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: "quality_filter",
+            schema: {
+              type: "object",
+              properties: {
+                selectedCandidates: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      index: { type: "integer", minimum: 0 },
+                      reasoning: { type: "string" }
+                    },
+                    required: ["index", "reasoning"]
                   },
-                  required: ["index", "reasoning"]
+                  maxItems: 10,
+                  description: "Best candidates with reasoning in preference order"
                 },
-                maxItems: 10,
-                description: "Best candidates with reasoning in preference order"
+                overallReasoning: {
+                  type: "string",
+                  description: "Brief explanation of overall selection criteria"
+                }
               },
-              overallReasoning: {
-                type: "string",
-                description: "Brief explanation of overall selection criteria"
-              }
-            },
-            required: ["selectedCandidates", "overallReasoning"]
+              required: ["selectedCandidates", "overallReasoning"]
+            }
           }
-        }
-      },
-      temperature: 0.1
-    });
+        },
+        temperature: 0.1
+      })
+    );
 
     const responseContent = response.choices[0].message.content;
     if (!responseContent) {
@@ -356,28 +418,30 @@ For small quantities: Standard package sizes usually appropriate
 Provide practical shopping decisions, not just strict math.
 `;
 
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [{ role: "user", content: prompt }],
-      response_format: {
-        type: "json_schema",
-        json_schema: {
-          name: "smart_quantity",
-          schema: {
-            type: "object",
-            properties: {
-              unitsNeeded: { type: "integer", minimum: 1 },
-              actualAmount: { type: "number" },
-              actualUnit: { type: "string" },
-              reasoning: { type: "string" },
-              overageAcceptable: { type: "boolean" }
-            },
-            required: ["unitsNeeded", "actualAmount", "actualUnit", "reasoning"]
+    const response = await this.retryWithBackoff(() =>
+      openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [{ role: "user", content: prompt }],
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: "smart_quantity",
+            schema: {
+              type: "object",
+              properties: {
+                unitsNeeded: { type: "integer", minimum: 1 },
+                actualAmount: { type: "number" },
+                actualUnit: { type: "string" },
+                reasoning: { type: "string" },
+                overageAcceptable: { type: "boolean" }
+              },
+              required: ["unitsNeeded", "actualAmount", "actualUnit", "reasoning"]
+            }
           }
-        }
-      },
-      temperature: 0.1
-    });
+        },
+        temperature: 0.1
+      })
+    );
 
     const responseContent = response.choices[0].message.content;
     if (!responseContent) {

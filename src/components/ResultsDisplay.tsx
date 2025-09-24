@@ -47,6 +47,7 @@ export default function ResultsDisplay({ results }: ResultsDisplayProps) {
             {results.foundItems.map((item, index) => {
               // Find alternatives for this item by matching the original shopping list items
               let itemAlternatives: Array<{ product: Product; score: number; tier: string }> = []
+              let originalRequest = ''
               
               if (results.candidatesConsidered) {
                 // Try to find alternatives by looking for entries where the selected product matches
@@ -59,6 +60,7 @@ export default function ResultsDisplay({ results }: ResultsDisplayProps) {
                 })
                 
                 if (matchingEntry) {
+                  originalRequest = matchingEntry[0] // The original text is the key
                   itemAlternatives = matchingEntry[1]
                 }
               }
@@ -69,6 +71,7 @@ export default function ResultsDisplay({ results }: ResultsDisplayProps) {
                   item={item}
                   index={index}
                   alternatives={itemAlternatives}
+                  originalRequest={originalRequest}
                   onSelectAlternative={(product) => {
                     // TODO: Implement alternative selection
                     console.log('Selected alternative:', product)

@@ -42,43 +42,60 @@ export class GroceryService {
    * Main processing method - converts shopping list to results
    */
   async processShoppingList(shoppingList: string): Promise<ShoppingResult> {
-    console.log('🛒 Starting grocery shopping process');
+    console.log('🛒 Starting grocery shopping process (optimized mode)');
     const timestamp = new Date().toISOString();
     const candidatesLog: Record<string, Array<{ product: Product; score: number; tier: string }>> = {};
 
     try {
-      // Step 1: Parse shopping list with AI
+      // Step 1: Parse shopping list with AI (with timeout handling)
       console.log('📝 Parsing shopping list...');
-      const shoppingItems = await this.parseShoppingList(shoppingList);
+      let shoppingItems: ShoppingItem[];
+      
+      try {
+        const parsePromise = this.parseShoppingList(shoppingList);
+        const timeoutPromise = new Promise<never>((_, reject) => 
+          setTimeout(() => reject(new Error('Parsing timeout')), 10000)
+        );
+        shoppingItems = await Promise.race([parsePromise, timeoutPromise]);
+      } catch (error) {
+        console.warn('⚠️ AI parsing failed, using fallback parsing:', error);
+        shoppingItems = this.fallbackParse(shoppingList);
+      }
+      
       console.log(`📋 Parsed ${shoppingItems.length} items`);
 
       const foundItems: ProductMatch[] = [];
       const notFound: string[] = [];
 
-      // Step 2: Process each item
+      // Step 2: Process items with optimized search (minimal AI calls)
       for (let i = 0; i < shoppingItems.length; i++) {
         const item = shoppingItems[i];
         console.log(`🔄 Processing item ${i + 1}/${shoppingItems.length}: ${item.originalText}`);
 
-        // Find matching products
-        const candidates = await this.findMatchingProducts(item);
-        candidatesLog[item.originalText] = candidates.slice(0, 3);
+        try {
+          // Use fast search without heavy AI filtering
+          const candidates = await this.findMatchingProductsUltraFast(item);
+          candidatesLog[item.originalText] = candidates.slice(0, 3);
 
-        if (candidates.length === 0) {
-          notFound.push(item.originalText);
-          console.log(`❌ No matches found for ${item.item}`);
-          continue;
-        }
+          if (candidates.length === 0) {
+            console.log(`❌ No matches found for ${item.item}`);
+            notFound.push(item.originalText);
+            continue;
+          }
 
-        // Try to calculate quantity for best match
-        const bestMatch = await this.calculateQuantityForProduct(item, candidates[0]);
-        
-        if (bestMatch) {
-          foundItems.push(bestMatch);
-          console.log(`✅ Added to basket: ${bestMatch.product.title}`);
-        } else {
+          // Use simplified quantity calculation
+          const bestMatch = this.calculateQuantitySimple(item, candidates[0]);
+          
+          if (bestMatch) {
+            console.log(`✅ Added to basket: ${bestMatch.product.title}`);
+            foundItems.push(bestMatch);
+          } else {
+            console.log(`❌ Couldn't calculate quantities for ${item.item}`);
+            notFound.push(item.originalText);
+          }
+        } catch (error) {
+          console.error(`❌ Error processing ${item.item}:`, error);
           notFound.push(item.originalText);
-          console.log(`❌ Couldn't calculate quantities for ${item.item}`);
         }
       }
 
@@ -200,13 +217,20 @@ export class GroceryService {
 
       scoredCandidates.sort((a, b) => b.score - a.score);
 
-      // Step 5: LLM quality filtering if we have enough candidates
-      if (scoredCandidates.length > 10) {
-        return this.applyQualityFilter(scoredCandidates.slice(0, 15), item);
+      // Step 5: Enhanced candidate selection like Python implementation
+      let finalCandidates = scoredCandidates;
+      
+      // Apply quality filtering for complex cases with many candidates
+      if (scoredCandidates.length > 12) {
+        console.log(`🤖 Applying LLM quality filter to ${scoredCandidates.length} candidates...`);
+        finalCandidates = await this.applyQualityFilter(scoredCandidates.slice(0, 20), item);
       }
+      
+      // Ensure we have diverse results by removing very similar products
+      finalCandidates = this.removeDuplicateSimilarProducts(finalCandidates);
 
-      console.log(`🏆 Found ${scoredCandidates.length} candidates`);
-      return scoredCandidates.slice(0, 5);
+      console.log(`🏆 Found ${finalCandidates.length} final candidates`);
+      return finalCandidates.slice(0, 8); // Return more candidates for better selection
 
     } catch (error) {
       console.error('❌ Product search failed:', error);
@@ -247,21 +271,21 @@ export class GroceryService {
   }
 
   /**
-   * Basic keyword scoring algorithm
+   * Basic keyword scoring exactly matching Python implementation
    */
   private basicKeywordScore(product: Product, searchTerms: string[]): number {
     const titleLower = product.title.toLowerCase();
     const titleWords = new Set(titleLower.split(' '));
-    let score = 0;
-
+    let score = 0.0;
+    
     for (const term of searchTerms) {
       const termLower = term.toLowerCase();
-
+      
       // Exact word match (highest score)
       if (titleWords.has(termLower)) {
         score += 2.0;
       }
-      // Compound word match (medium score)
+      // Compound word match (medium score)  
       else if ([...titleWords].some(word => word.length > termLower.length && word.includes(termLower))) {
         score += 1.5;
       }
@@ -270,7 +294,7 @@ export class GroceryService {
         score += 1.0;
       }
     }
-
+    
     return score;
   }
 
@@ -442,6 +466,582 @@ export class GroceryService {
       console.error('❌ Quantity calculation failed:', error);
       return null;
     }
+  }
+
+  /**
+   * Ultra-fast product matching with minimal AI calls - maximum performance
+   */
+  private async findMatchingProductsUltraFast(item: ShoppingItem): Promise<Array<{ product: Product; score: number; tier: string }>> {
+    try {
+      console.log(`🔍 Ultra-fast search for: ${item.item}`);
+
+      // Step 1: Use simple category mapping (no AI)
+      const targetCategories = await this.determineCategoriesNoAI(item);
+      console.log(`📂 Target categories: ${targetCategories.join(', ')}`);
+
+      // Step 2: Generate search tiers without AI
+      const searchTiers = this.generateSimpleSearchTiers(item);
+      console.log(`🎯 Simple search tiers generated`);
+
+      const allCandidates: Array<{ product: Product; score: number; tier: string }> = [];
+
+      // Tier 1: Exact matches
+      const tier1Candidates = this.searchProductsWithCategories(searchTiers.tier1, targetCategories, 'tier1', 0.8);
+      allCandidates.push(...tier1Candidates);
+
+      // Tier 2: General matches if needed
+      if (allCandidates.length < 3) {
+        const tier2Candidates = this.searchProductsWithCategories(searchTiers.tier2, targetCategories, 'tier2', 0.5);
+        allCandidates.push(...tier2Candidates);
+      }
+
+      // Calculate smart scores and sort
+      const scoredCandidates = allCandidates.map(candidate => ({
+        ...candidate,
+        score: this.calculateSmartScore(candidate.product, searchTiers, item, candidate.score, candidate.tier)
+      }));
+
+      scoredCandidates.sort((a, b) => b.score - a.score);
+
+      // Remove duplicates
+      const finalCandidates = this.removeDuplicateSimilarProducts(scoredCandidates);
+      
+      console.log(`🏆 Found ${finalCandidates.length} candidates (ultra-fast)`);
+      return finalCandidates.slice(0, 5); // Return fewer candidates for speed
+
+    } catch (error) {
+      console.error('❌ Ultra-fast product search failed:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Fast product matching without heavy AI filtering - optimized for speed
+   */
+  private async findMatchingProductsFast(item: ShoppingItem): Promise<Array<{ product: Product; score: number; tier: string }>> {
+    try {
+      console.log(`🔍 Finding products for: ${item.item}`);
+
+      // Step 1: Determine target categories using cached or simplified logic
+      const targetCategories = await this.determineCategoriesSimple(item);
+      console.log(`📂 Target categories: ${targetCategories.join(', ')}`);
+
+      // Step 2: Generate search tiers with AI (falls back to simple if needed)
+      const searchTiers = await this.generateSearchTiers(item);
+      console.log(`🎯 Search tiers generated`);
+
+      const allCandidates: Array<{ product: Product; score: number; tier: string }> = [];
+
+      // Tier 1: Exact matches
+      const tier1Candidates = this.searchProductsWithCategories(searchTiers.tier1, targetCategories, 'tier1', 0.8);
+      allCandidates.push(...tier1Candidates);
+      console.log(`   tier1: ${targetCategories.length * this.products.filter(p => targetCategories.includes(p.category)).length} products in categories, ${tier1Candidates.length} matches`);
+
+      // Tier 2: General matches if needed
+      if (allCandidates.length < 5) {
+        const tier2Candidates = this.searchProductsWithCategories(searchTiers.tier2, targetCategories, 'tier2', 0.5);
+        allCandidates.push(...tier2Candidates);
+        console.log(`   tier2: ${targetCategories.length * this.products.filter(p => targetCategories.includes(p.category)).length} products in categories, ${tier2Candidates.length} matches`);
+      }
+
+      // Calculate smart scores and sort
+      const scoredCandidates = allCandidates.map(candidate => ({
+        ...candidate,
+        score: this.calculateSmartScore(candidate.product, searchTiers, item, candidate.score, candidate.tier)
+      }));
+
+      scoredCandidates.sort((a, b) => b.score - a.score);
+
+      // Enhanced candidate selection for fast mode
+      const finalCandidates = this.removeDuplicateSimilarProducts(scoredCandidates);
+      
+      console.log(`🏆 Found ${finalCandidates.length} candidates`);
+      return finalCandidates.slice(0, 8);
+
+    } catch (error) {
+      console.error('❌ Fast product search failed:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Category determination without AI - pure mapping for ultra-fast performance
+   */
+  private async determineCategoriesNoAI(item: ShoppingItem): Promise<string[]> {
+    // Enhanced fallback mapping based on Python implementation patterns
+    const categoryMap: Record<string, string[]> = {
+      // Fresh produce - enhanced with more terms
+      'avocado': ['Obst & Gemüse'],
+      'tomate': ['Obst & Gemüse'],
+      'tomates': ['Obst & Gemüse'],
+      'tomato': ['Obst & Gemüse'],
+      'tomatoes': ['Obst & Gemüse'],
+      'brokkoli': ['Obst & Gemüse'],
+      'broccoli': ['Obst & Gemüse'],
+      'salat': ['Obst & Gemüse'],
+      'salad': ['Obst & Gemüse'],
+      'gurke': ['Obst & Gemüse'],
+      'cucumber': ['Obst & Gemüse'],
+      'paprika': ['Obst & Gemüse'],
+      'pepper': ['Obst & Gemüse'],
+      'zwiebel': ['Obst & Gemüse'],
+      'onion': ['Obst & Gemüse'],
+      'karotte': ['Obst & Gemüse'],
+      'carrot': ['Obst & Gemüse'],
+      'kartoffel': ['Obst & Gemüse'],
+      'potato': ['Obst & Gemüse'],
+      'apfel': ['Obst & Gemüse'],
+      'apple': ['Obst & Gemüse'],
+      'banane': ['Obst & Gemüse'],
+      'banana': ['Obst & Gemüse'],
+      
+      // Pasta and grains - enhanced
+      'nudeln': ['Kochen & Backen', 'Brot, Cerealien & Aufstriche'],
+      'pasta': ['Kochen & Backen', 'Brot, Cerealien & Aufstriche'],
+      'spaghetti': ['Kochen & Backen', 'Brot, Cerealien & Aufstriche'],
+      'vollkorn': ['Kochen & Backen', 'Brot, Cerealien & Aufstriche'],
+      'wheat': ['Kochen & Backen', 'Brot, Cerealien & Aufstriche'],
+      'reis': ['Kochen & Backen'],
+      'rice': ['Kochen & Backen'],
+      'mehl': ['Kochen & Backen'],
+      'flour': ['Kochen & Backen'],
+      
+      // Proteins - enhanced
+      'tofu': ['Fleisch & Fisch'],
+      'hähnchen': ['Fleisch & Fisch'],
+      'chicken': ['Fleisch & Fisch'],
+      'fleisch': ['Fleisch & Fisch'],
+      'meat': ['Fleisch & Fisch'],
+      'fisch': ['Fleisch & Fisch'],
+      'fish': ['Fleisch & Fisch'],
+      'chorizo': ['Fleisch & Fisch'],
+      'soyrizo': ['Fleisch & Fisch'],
+      
+      // Dairy - enhanced
+      'milch': ['Käse, Eier & Molkerei'],
+      'milk': ['Käse, Eier & Molkerei'],
+      'käse': ['Käse, Eier & Molkerei'],
+      'cheese': ['Käse, Eier & Molkerei'],
+      'cheddar': ['Käse, Eier & Molkerei'],
+      'joghurt': ['Käse, Eier & Molkerei'],
+      'yogurt': ['Käse, Eier & Molkerei'],
+      'butter': ['Käse, Eier & Molkerei'],
+      'eier': ['Käse, Eier & Molkerei'],
+      'eggs': ['Käse, Eier & Molkerei'],
+      
+      // Condiments and spreads
+      'peanut': ['Brot, Cerealien & Aufstriche'],
+      'erdnuss': ['Brot, Cerealien & Aufstriche'],
+      'butter': ['Käse, Eier & Molkerei', 'Brot, Cerealien & Aufstriche'],
+      'öl': ['Öle, Soßen & Gewürze'],
+      'oil': ['Öle, Soßen & Gewürze'],
+      
+      // Herbs and spices - enhanced
+      'green onion': ['Obst & Gemüse'],
+      'spring onion': ['Obst & Gemüse'],
+      'scallion': ['Obst & Gemüse'],
+      'frühlingszwiebel': ['Obst & Gemüse'],
+      'lauchzwiebel': ['Obst & Gemüse'],
+    };
+
+    const itemLower = item.item.toLowerCase();
+    const originalLower = item.originalText.toLowerCase();
+    
+    // Check both item and original text for broader matching
+    for (const [key, categories] of Object.entries(categoryMap)) {
+      if (itemLower.includes(key) || originalLower.includes(key)) {
+        console.log(`📋 Mapped "${item.item}" to categories: ${categories.join(', ')} (key: "${key}")`);
+        return categories;
+      }
+    }
+
+    // Enhanced fallback based on item type
+    const typeCategories: Record<string, string[]> = {
+      'fresh_produce': ['Obst & Gemüse'],
+      'dairy': ['Käse, Eier & Molkerei'],
+      'meat': ['Fleisch & Fisch'],
+      'dry_goods': ['Kochen & Backen', 'Brot, Cerealien & Aufstriche'],
+      'herbs_spices': ['Öle, Soßen & Gewürze'],
+      'canned': ['Fertiggerichte & Konserven'],
+      'condiments': ['Öle, Soßen & Gewürze'],
+      'grains': ['Kochen & Backen', 'Brot, Cerealien & Aufstriche'],
+      'spreads': ['Brot, Cerealien & Aufstriche'],
+    };
+    
+    if (item.itemType && typeCategories[item.itemType]) {
+      console.log(`📋 Used item type "${item.itemType}" to determine categories: ${typeCategories[item.itemType].join(', ')}`);
+      return typeCategories[item.itemType];
+    }
+
+    // Ultimate fallback - return most common categories
+    console.log(`📋 Using default fallback categories for "${item.item}"`);
+    return ['Kochen & Backen', 'Obst & Gemüse'];
+  }
+
+  /**
+   * Enhanced category determination - tries AI first, falls back to mapping
+   */
+  private async determineCategoriesSimple(item: ShoppingItem): Promise<string[]> {
+    try {
+      // First try AI category determination like Python implementation
+      const categoryResult = await OpenAIClient.determineCategories(
+        item.item,
+        item.itemType,
+        item.attributes,
+        item.originalText
+      );
+      
+      if (categoryResult.categories.length > 0) {
+        console.log(`🤖 AI determined categories: ${categoryResult.categories.join(', ')}`);
+        return categoryResult.categories;
+      }
+    } catch (error) {
+      console.warn('⚠️ AI category determination failed, using fallback:', error);
+    }
+
+    // Enhanced fallback mapping based on Python implementation patterns
+    const categoryMap: Record<string, string[]> = {
+      // Fresh produce - enhanced with more terms
+      'avocado': ['Obst & Gemüse'],
+      'tomate': ['Obst & Gemüse'],
+      'tomates': ['Obst & Gemüse'],
+      'tomato': ['Obst & Gemüse'],
+      'tomatoes': ['Obst & Gemüse'],
+      'brokkoli': ['Obst & Gemüse'],
+      'broccoli': ['Obst & Gemüse'],
+      'salat': ['Obst & Gemüse'],
+      'salad': ['Obst & Gemüse'],
+      'gurke': ['Obst & Gemüse'],
+      'cucumber': ['Obst & Gemüse'],
+      'paprika': ['Obst & Gemüse'],
+      'pepper': ['Obst & Gemüse'],
+      'zwiebel': ['Obst & Gemüse'],
+      'onion': ['Obst & Gemüse'],
+      'karotte': ['Obst & Gemüse'],
+      'carrot': ['Obst & Gemüse'],
+      'kartoffel': ['Obst & Gemüse'],
+      'potato': ['Obst & Gemüse'],
+      'apfel': ['Obst & Gemüse'],
+      'apple': ['Obst & Gemüse'],
+      'banane': ['Obst & Gemüse'],
+      'banana': ['Obst & Gemüse'],
+      
+      // Pasta and grains - enhanced
+      'nudeln': ['Kochen & Backen', 'Brot, Cerealien & Aufstriche'],
+      'pasta': ['Kochen & Backen', 'Brot, Cerealien & Aufstriche'],
+      'spaghetti': ['Kochen & Backen', 'Brot, Cerealien & Aufstriche'],
+      'vollkorn': ['Kochen & Backen', 'Brot, Cerealien & Aufstriche'],
+      'wheat': ['Kochen & Backen', 'Brot, Cerealien & Aufstriche'],
+      'reis': ['Kochen & Backen'],
+      'rice': ['Kochen & Backen'],
+      'mehl': ['Kochen & Backen'],
+      'flour': ['Kochen & Backen'],
+      
+      // Proteins - enhanced
+      'tofu': ['Fleisch & Fisch'],
+      'hähnchen': ['Fleisch & Fisch'],
+      'chicken': ['Fleisch & Fisch'],
+      'fleisch': ['Fleisch & Fisch'],
+      'meat': ['Fleisch & Fisch'],
+      'fisch': ['Fleisch & Fisch'],
+      'fish': ['Fleisch & Fisch'],
+      'chorizo': ['Fleisch & Fisch'],
+      'soyrizo': ['Fleisch & Fisch'],
+      
+      // Dairy - enhanced
+      'milch': ['Käse, Eier & Molkerei'],
+      'milk': ['Käse, Eier & Molkerei'],
+      'käse': ['Käse, Eier & Molkerei'],
+      'cheese': ['Käse, Eier & Molkerei'],
+      'cheddar': ['Käse, Eier & Molkerei'],
+      'joghurt': ['Käse, Eier & Molkerei'],
+      'yogurt': ['Käse, Eier & Molkerei'],
+      'butter': ['Käse, Eier & Molkerei'],
+      'eier': ['Käse, Eier & Molkerei'],
+      'eggs': ['Käse, Eier & Molkerei'],
+      
+      // Condiments and spreads
+      'peanut': ['Brot, Cerealien & Aufstriche'],
+      'erdnuss': ['Brot, Cerealien & Aufstriche'],
+      'butter': ['Käse, Eier & Molkerei', 'Brot, Cerealien & Aufstriche'],
+      'öl': ['Öle, Soßen & Gewürze'],
+      'oil': ['Öle, Soßen & Gewürze'],
+      
+      // Herbs and spices
+      'onion': ['Obst & Gemüse'],
+      'green': ['Obst & Gemüse'],
+      'green onion': ['Obst & Gemüse'],
+      'spring onion': ['Obst & Gemüse'],
+      'scallion': ['Obst & Gemüse'],
+      'frühlingszwiebel': ['Obst & Gemüse'],
+      'lauchzwiebel': ['Obst & Gemüse'],
+    };
+
+    const itemLower = item.item.toLowerCase();
+    const originalLower = item.originalText.toLowerCase();
+    
+    // Check both item and original text for broader matching
+    for (const [key, categories] of Object.entries(categoryMap)) {
+      if (itemLower.includes(key) || originalLower.includes(key)) {
+        console.log(`📋 Mapped "${item.item}" to categories: ${categories.join(', ')} (key: "${key}")`);
+        return categories;
+      }
+    }
+
+    // Enhanced fallback based on item type
+    const typeCategories: Record<string, string[]> = {
+      'fresh_produce': ['Obst & Gemüse'],
+      'dairy': ['Käse, Eier & Molkerei'],
+      'meat': ['Fleisch & Fisch'],
+      'dry_goods': ['Kochen & Backen', 'Brot, Cerealien & Aufstriche'],
+      'herbs_spices': ['Öle, Soßen & Gewürze'],
+      'canned': ['Fertiggerichte & Konserven'],
+      'condiments': ['Öle, Soßen & Gewürze'],
+      'grains': ['Kochen & Backen', 'Brot, Cerealien & Aufstriche'],
+      'spreads': ['Brot, Cerealien & Aufstriche'],
+    };
+    
+    if (item.itemType && typeCategories[item.itemType]) {
+      console.log(`📋 Used item type "${item.itemType}" to determine categories: ${typeCategories[item.itemType].join(', ')}`);
+      return typeCategories[item.itemType];
+    }
+
+    // Ultimate fallback - return most common categories
+    console.log(`📋 Using default fallback categories for "${item.item}"`);
+    return ['Kochen & Backen', 'Obst & Gemüse'];
+  }
+
+  /**
+   * Generate search tiers using LLM - enhanced from Python implementation
+   */
+  private async generateSearchTiers(item: ShoppingItem): Promise<SearchTiers> {
+    try {
+      // Use AI to generate proper search tiers like the Python implementation
+      const searchTiers = await OpenAIClient.generateSearchTiers(
+        item.item,
+        item.attributes,
+        item.alternatives,
+        item.itemType
+      );
+      
+      console.log(`🎯 LLM generated search tiers for "${item.item}"`);
+      console.log(`   Tier 1 (${searchTiers.tier1.length} terms): ${searchTiers.tier1.slice(0, 3).join(', ')}${searchTiers.tier1.length > 3 ? '...' : ''}`);
+      console.log(`   Tier 2 (${searchTiers.tier2.length} terms): ${searchTiers.tier2.slice(0, 3).join(', ')}${searchTiers.tier2.length > 3 ? '...' : ''}`);
+      console.log(`   Tier 3 (${searchTiers.tier3.length} terms): ${searchTiers.tier3.slice(0, 3).join(', ')}${searchTiers.tier3.length > 3 ? '...' : ''}`);
+      
+      return searchTiers;
+    } catch (error) {
+      console.warn('⚠️ LLM search tier generation failed, using fallback:', error);
+      return this.generateSimpleSearchTiers(item);
+    }
+  }
+
+  /**
+   * Fallback: Generate simple search tiers without AI
+   */
+  private generateSimpleSearchTiers(item: ShoppingItem): SearchTiers {
+    const baseItem = item.item.toLowerCase();
+    const attributes = item.attributes.map(a => a.toLowerCase());
+    const originalText = item.originalText.toLowerCase();
+    
+    // Special handling for green onion/scallion terminology
+    let tier1: string[] = [];
+    let tier2: string[] = [];
+    let tier3: string[] = [];
+    
+    if (originalText.includes('green onion') || originalText.includes('spring onion') || originalText.includes('scallion')) {
+      // Special case for green onions - use proper German terms
+      tier1 = [
+        'lauchzwiebeln',
+        'frühlingszwiebeln', 
+        'green onion',
+        'spring onion',
+        'scallion',
+        'lauch zwiebeln'
+      ];
+      tier2 = [
+        'zwiebeln',
+        'lauch',
+        'onion',
+        'zwiebel'
+      ];
+      tier3 = [
+        'schnittlauch',
+        'porree'
+      ];
+    } else {
+      // Standard fallback logic
+      const baseWords = baseItem.split(' ').filter(word => word.length > 0);
+      const attributeWords = attributes.flatMap(attr => attr.split(' ')).filter(word => word.length > 0);
+      
+      // Tier 1: Individual words, exact phrases, and combinations
+      tier1 = [
+        // Original phrase
+        baseItem,
+        // Individual words (most important for German word order flexibility)
+        ...baseWords,
+        // Reverse word order for phrases
+        ...(baseWords.length > 1 ? [baseWords.slice().reverse().join(' ')] : []),
+        // Attributes with base item (different orders)
+        ...attributes.map(attr => `${attr} ${baseItem}`),
+        ...attributes.map(attr => `${baseItem} ${attr}`),
+        // Individual attribute words
+        ...attributeWords,
+      ];
+      
+      // Tier 2: Variations and alternatives
+      tier2 = [
+        // Character replacements for umlauts
+        baseItem.replace('ö', 'oe').replace('ä', 'ae').replace('ü', 'ue'),
+        // Individual words with umlaut replacements
+        ...baseWords.map(word => word.replace('ö', 'oe').replace('ä', 'ae').replace('ü', 'ue')),
+        // Common variations
+        ...baseWords.filter(word => word.length > 3), // Only longer words to avoid noise
+      ];
+      
+      // Tier 3: Alternatives from LLM
+      tier3 = item.alternatives.slice(0, 3);
+    }
+    
+    // Remove duplicates and limit sizes
+    return { 
+      tier1: [...new Set(tier1)].slice(0, 8),
+      tier2: [...new Set(tier2)].slice(0, 6), 
+      tier3: [...new Set(tier3)].slice(0, 4)
+    };
+  }
+
+  /**
+   * Simple quantity calculation without AI
+   */
+  private calculateQuantitySimple(item: ShoppingItem, candidate: { product: Product; score: number; tier: string }): ProductMatch | null {
+    try {
+      const { product } = candidate;
+      
+      // Parse product volume
+      const productVolume = this.volumeParser.parseVolume(product.volume);
+      
+      if (!productVolume || productVolume.amount === 0) {
+        // No volume info - assume 1 unit needed
+        return {
+          product,
+          unitsNeeded: 1,
+          actualAmount: 1,
+          actualUnit: 'stück',
+          totalPrice: product.price,
+          confidence: candidate.score,
+          matchTier: candidate.tier,
+          matchReasoning: 'Deterministic calculation: 1 units = 1stück'
+        };
+      }
+
+      // Simple unit conversion and calculation
+      const targetAmount = item.amount;
+      const targetUnit = item.unit;
+      const productAmount = productVolume.amount;
+      const productUnit = productVolume.unit;
+
+      // Direct unit match
+      if (targetUnit === productUnit) {
+        const unitsNeeded = Math.max(1, Math.ceil(targetAmount / productAmount));
+        return {
+          product,
+          unitsNeeded,
+          actualAmount: unitsNeeded * productAmount,
+          actualUnit: productUnit,
+          totalPrice: unitsNeeded * product.price,
+          confidence: candidate.score,
+          matchTier: candidate.tier,
+          matchReasoning: `Deterministic calculation: ${unitsNeeded} units = ${unitsNeeded * productAmount}${productUnit}`
+        };
+      }
+
+      // Simple unit conversions
+      let convertedProductAmount = productAmount;
+      let convertedTargetAmount = targetAmount;
+
+      // kg to g
+      if (productUnit === 'kg' && targetUnit === 'g') {
+        convertedProductAmount *= 1000;
+      } else if (productUnit === 'g' && targetUnit === 'kg') {
+        convertedTargetAmount *= 1000;
+      }
+      // l to ml  
+      else if (productUnit === 'l' && targetUnit === 'ml') {
+        convertedProductAmount *= 1000;
+      } else if (productUnit === 'ml' && targetUnit === 'l') {
+        convertedTargetAmount *= 1000;
+      }
+
+      const unitsNeeded = Math.max(1, Math.ceil(convertedTargetAmount / convertedProductAmount));
+      const finalAmount = unitsNeeded * convertedProductAmount;
+      const finalUnit = productUnit === 'kg' || targetUnit === 'g' ? 'g' : 
+                       productUnit === 'l' || targetUnit === 'ml' ? 'ml' : productUnit;
+
+      return {
+        product,
+        unitsNeeded,
+        actualAmount: finalAmount,
+        actualUnit: finalUnit,
+        totalPrice: unitsNeeded * product.price,
+        confidence: candidate.score,
+        matchTier: candidate.tier,
+        matchReasoning: `Deterministic calculation: ${unitsNeeded} units = ${finalAmount}${finalUnit}`
+      };
+
+    } catch (error) {
+      console.error('❌ Simple quantity calculation failed:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Remove duplicate or very similar products to ensure diverse results
+   */
+  private removeDuplicateSimilarProducts(
+    candidates: Array<{ product: Product; score: number; tier: string }>
+  ): Array<{ product: Product; score: number; tier: string }> {
+    const uniqueCandidates: Array<{ product: Product; score: number; tier: string }> = [];
+    const seenTitles = new Set<string>();
+    
+    for (const candidate of candidates) {
+      const title = candidate.product.title.toLowerCase();
+      const normalizedTitle = title.replace(/\s+/g, ' ').trim();
+      
+      // Check if we've seen this exact title
+      if (seenTitles.has(normalizedTitle)) {
+        continue;
+      }
+      
+      // Check for very similar titles (>80% similarity)
+      let isSimilar = false;
+      for (const seenTitle of seenTitles) {
+        if (this.calculateTitleSimilarity(normalizedTitle, seenTitle) > 0.8) {
+          isSimilar = true;
+          break;
+        }
+      }
+      
+      if (!isSimilar) {
+        uniqueCandidates.push(candidate);
+        seenTitles.add(normalizedTitle);
+      }
+    }
+    
+    return uniqueCandidates;
+  }
+  
+  /**
+   * Calculate similarity between two product titles
+   */
+  private calculateTitleSimilarity(title1: string, title2: string): number {
+    const words1 = new Set(title1.split(' '));
+    const words2 = new Set(title2.split(' '));
+    
+    const intersection = new Set([...words1].filter(word => words2.has(word)));
+    const union = new Set([...words1, ...words2]);
+    
+    return intersection.size / union.size; // Jaccard similarity
   }
 
   /**

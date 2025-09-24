@@ -8,9 +8,10 @@ interface ProductCardProps {
   index: number
   alternatives?: Array<{ product: Product; score: number; tier: string }>
   onSelectAlternative?: (product: Product) => void
+  originalRequest?: string
 }
 
-export default function ProductCard({ item, index: _index, alternatives = [], onSelectAlternative }: ProductCardProps) {
+export default function ProductCard({ item, index: _index, alternatives = [], onSelectAlternative, originalRequest }: ProductCardProps) {
   const [showAlternatives, setShowAlternatives] = useState(false)
 
   const formatPrice = (price: number) => `€${price.toFixed(2)}`
@@ -50,6 +51,12 @@ export default function ProductCard({ item, index: _index, alternatives = [], on
       <div className="flex items-start justify-between">
         <div className="flex-1">
           <h4 className="font-medium text-gray-900 mb-2">{item.product.title}</h4>
+          {originalRequest && (
+            <div className="mb-2 p-2 bg-blue-50 border border-blue-200 rounded text-sm">
+              <span className="font-medium text-blue-800">For: </span>
+              <span className="text-blue-700">{originalRequest}</span>
+            </div>
+          )}
           <div className="flex items-center space-x-2 mb-2">
             <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getTierBadgeColor(item.matchTier)}`}>
               {getTierLabel(item.matchTier)}

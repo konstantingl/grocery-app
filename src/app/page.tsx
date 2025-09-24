@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import AuthForm from '@/components/AuthForm';
 import GroceryListInput from '@/components/GroceryListInput';
@@ -16,8 +16,15 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState<ProcessingProgress | null>(null);
+  const currentRequestRef = useRef<AbortController | null>(null);
 
   const handleProcessList = async (shoppingList: string) => {
+    // Cancel any existing request
+    if (currentRequestRef.current) {
+      currentRequestRef.current.abort();
+      currentRequestRef.current = null;
+    }
+    
     setLoading(true);
     setError(null);
     setResults(null);
@@ -69,13 +76,27 @@ export default function Home() {
     const progressInterval = simulateProgress();
 
     try {
+      // Create AbortController only for user cancellation (no timeout)
+      const controller = new AbortController();
+      currentRequestRef.current = controller;
+
       const response = await fetch('/api/process-list', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ shoppingList }),
+        signal: controller.signal,
       });
+      
+      if (!response.ok) {
+        throw new Error(`Server error: ${response.status} ${response.statusText}`);
+      }
+
+      const contentType = response.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        throw new Error('Server returned non-JSON response. Please try again.');
+      }
 
       const data = await response.json();
 
@@ -101,9 +122,32 @@ export default function Home() {
     } catch (err) {
       clearInterval(progressInterval);
       console.error('Error processing grocery list:', err);
-      setError('Failed to connect to the server. Please try again.');
+      
+      let errorMessage = 'Failed to process your shopping list. Please try again.';
+      
+      if (err instanceof Error) {
+        if (err.name === 'AbortError') {
+          // This is caused by user navigation, page refresh, or component unmounting
+          console.log('Request was cancelled (this is normal if you navigated away)');
+          errorMessage = 'Request was cancelled. If you did not navigate away, please try again.';
+        } else if (err.message.includes('non-JSON response')) {
+          errorMessage = err.message;
+        } else if (err.message.includes('Server error')) {
+          errorMessage = 'Server is experiencing issues. Please try again in a moment.';
+        } else if (err.message.includes('Failed to fetch')) {
+          errorMessage = 'Network error. Please check your connection and try again.';
+        }
+      }
+      
+      setError(errorMessage);
       setProgress(null);
     } finally {
+      // Cleanup
+      clearInterval(progressInterval);
+      // Clear the current request ref
+      if (currentRequestRef.current) {
+        currentRequestRef.current = null;
+      }
       setLoading(false);
     }
   };
