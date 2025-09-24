@@ -11,10 +11,12 @@ import type {
 } from '@/types';
 import { VolumeParser } from './volume-parser';
 import { OpenAIClient } from './openai-client';
+import { AdvancedSearchEngine, SearchConfig, SearchResult as AdvancedSearchResult } from './advanced-search-engine';
 
 export class GroceryService {
   private products: Product[];
   private volumeParser: VolumeParser;
+  private advancedSearchEngine: AdvancedSearchEngine;
 
   // Available Rewe categories
   private static readonly REWE_CATEGORIES = [
@@ -31,6 +33,7 @@ export class GroceryService {
   constructor(products: Product[]) {
     this.products = products;
     this.volumeParser = new VolumeParser();
+    this.advancedSearchEngine = new AdvancedSearchEngine(products);
     console.log(`🧠 GroceryService initialized with ${products.length} products`);
     
     // Log product distribution across categories
@@ -73,8 +76,8 @@ export class GroceryService {
         console.log(`🔄 Processing item ${i + 1}/${shoppingItems.length}: ${item.originalText}`);
 
         try {
-          // Use fast search without heavy AI filtering
-          const candidates = await this.findMatchingProductsUltraFast(item);
+          // Use world-class advanced search engine
+          const candidates = await this.findMatchingProductsWorldClass(item);
           candidatesLog[item.originalText] = candidates.slice(0, 3);
 
           if (candidates.length === 0) {
@@ -465,6 +468,205 @@ export class GroceryService {
     } catch (error) {
       console.error('❌ Quantity calculation failed:', error);
       return null;
+    }
+  }
+
+  /**
+   * World-class product matching using advanced search engine
+   * Implements Google/Elasticsearch-level search with multiple algorithms
+   */
+  private async findMatchingProductsWorldClass(item: ShoppingItem): Promise<Array<{ product: Product; score: number; tier: string }>> {
+    try {
+      console.log(`🌟 World-class search for: ${item.item}`);
+      
+      // Step 1: Determine target categories (fast mode for performance)
+      const targetCategories = await this.determineCategoriesNoAI(item);
+      console.log(`📂 Target categories: ${targetCategories.join(', ')}`);
+      
+      // Step 2: Build comprehensive search query
+      const searchQuery = this.buildAdvancedSearchQuery(item);
+      console.log(`🔍 Search query: "${searchQuery}"`);
+      
+      // Step 3: Configure advanced search parameters
+      const searchConfig: SearchConfig = {
+        maxResults: 15,
+        fuzzyThreshold: 0.2, // Lower threshold for more tolerance
+        enableSemanticSearch: true,
+        diversityFactor: 0.4, // Higher diversity for better selection
+        queryExpansion: true
+      };
+      
+      // Step 4: Execute world-class search
+      const searchResults = await this.advancedSearchEngine.search(
+        searchQuery,
+        targetCategories,
+        searchConfig
+      );
+      
+      // Step 5: Convert to grocery service format with enhanced scoring
+      const candidates = searchResults.map(result => ({
+        product: result.product,
+        score: this.enhanceScoreWithGroceryContext(result, item),
+        tier: this.mapAdvancedTierToGroceryTier(result.tier),
+        relevanceBreakdown: result.relevanceBreakdown
+      }));
+      
+      console.log(`🎯 Advanced search found ${candidates.length} world-class results`);
+      return candidates;
+      
+    } catch (error) {
+      console.error('❌ World-class search failed, falling back to ultra-fast:', error);
+      // Fallback to ultra-fast search if advanced search fails
+      return this.findMatchingProductsUltraFast(item);
+    }
+  }
+
+  /**
+   * Build advanced search query from shopping item
+   */
+  private buildAdvancedSearchQuery(item: ShoppingItem): string {
+    let query = item.item;
+    
+    // Add attributes to query for better matching
+    if (item.attributes.length > 0) {
+      const attributeString = item.attributes.join(' ');
+      query = `${attributeString} ${query}`;
+    }
+    
+    // Add context from original text if different
+    if (item.originalText !== item.item && 
+        item.originalText.toLowerCase() !== item.item.toLowerCase()) {
+      const originalTerms = item.originalText
+        .toLowerCase()
+        .replace(/\d+\s*(g|kg|ml|l|stück|x)\s*/g, '') // Remove quantities
+        .trim();
+      
+      if (originalTerms && !query.toLowerCase().includes(originalTerms)) {
+        query = `${query} ${originalTerms}`;
+      }
+    }
+    
+    return query.trim();
+  }
+
+  /**
+   * Enhance search engine score with grocery-specific context
+   */
+  private enhanceScoreWithGroceryContext(
+    result: AdvancedSearchResult, 
+    item: ShoppingItem
+  ): number {
+    let enhancedScore = result.score;
+    
+    // Quantity appropriateness bonus
+    const quantityBonus = this.calculateQuantityAppropriatenessBonus(result.product, item);
+    enhancedScore += quantityBonus * 0.1;
+    
+    // Price reasonableness check
+    const priceBonus = this.calculatePriceReasonablenessBonus(result.product, item);
+    enhancedScore += priceBonus * 0.05;
+    
+    // Freshness preference for produce
+    if (item.itemType === 'fresh_produce') {
+      const freshnessBonus = this.calculateFreshnessBonus(result.product);
+      enhancedScore += freshnessBonus * 0.1;
+    }
+    
+    // Brand trust factor
+    const trustBonus = this.calculateBrandTrustBonus(result.product);
+    enhancedScore += trustBonus * 0.05;
+    
+    return Math.min(1.0, enhancedScore);
+  }
+
+  /**
+   * Calculate quantity appropriateness bonus
+   */
+  private calculateQuantityAppropriatenessBonus(product: Product, item: ShoppingItem): number {
+    const productVolume = this.volumeParser.parseVolume(product.volume);
+    if (!productVolume) return 0;
+
+    const neededGrams = this.volumeParser.convertToGrams(item.amount, item.unit);
+    const productGrams = this.volumeParser.convertToGrams(productVolume.amount, productVolume.unit);
+
+    if (neededGrams && productGrams) {
+      const ratio = neededGrams / productGrams;
+      
+      // Ideal ratios get highest bonus
+      if (ratio >= 0.5 && ratio <= 2.0) return 1.0;
+      if (ratio >= 0.25 && ratio <= 4.0) return 0.7;
+      if (ratio >= 0.1 && ratio <= 10.0) return 0.4;
+      
+      // Penalty for very inappropriate sizes
+      if (ratio > 20 || ratio < 0.05) return -0.5;
+    }
+
+    return 0;
+  }
+
+  /**
+   * Calculate price reasonableness bonus
+   */
+  private calculatePriceReasonablenessBonus(product: Product, item: ShoppingItem): number {
+    // Simple price reasonableness check based on category
+    const categoryPriceRanges: Record<string, [number, number]> = {
+      'Obst & Gemüse': [0.5, 5.0],
+      'Käse, Eier & Molkerei': [1.0, 8.0],
+      'Fleisch & Fisch': [2.0, 20.0],
+      'Kochen & Backen': [0.5, 6.0],
+      'Brot, Cerealien & Aufstriche': [1.0, 8.0]
+    };
+
+    const [minPrice, maxPrice] = categoryPriceRanges[product.category] || [0.5, 10.0];
+    
+    if (product.price >= minPrice && product.price <= maxPrice) {
+      return 1.0;
+    } else if (product.price > maxPrice) {
+      return Math.max(0, 1 - (product.price - maxPrice) / maxPrice);
+    } else {
+      // Very cheap might indicate poor quality
+      return 0.5;
+    }
+  }
+
+  /**
+   * Calculate freshness bonus for produce
+   */
+  private calculateFreshnessBonus(product: Product): number {
+    const title = product.title.toLowerCase();
+    
+    // Bonus for freshness indicators
+    if (title.includes('frisch') || title.includes('fresh')) return 1.0;
+    if (title.includes('bio') || title.includes('organic')) return 0.8;
+    if (title.includes('premium') || title.includes('extra')) return 0.6;
+    
+    return 0;
+  }
+
+  /**
+   * Calculate brand trust bonus
+   */
+  private calculateBrandTrustBonus(product: Product): number {
+    const title = product.title.toLowerCase();
+    
+    // Trusted brands and quality indicators
+    if (title.includes('bio') || title.includes('organic')) return 1.0;
+    if (title.includes('rewe')) return 0.8;
+    if (title.includes('premium') || title.includes('extra')) return 0.6;
+    if (title.includes('ja!') || title.includes('basic')) return 0.4;
+    
+    return 0;
+  }
+
+  /**
+   * Map advanced search tier to grocery service tier
+   */
+  private mapAdvancedTierToGroceryTier(advancedTier: string): string {
+    switch (advancedTier) {
+      case 'tier1': return 'advanced_tier1';
+      case 'tier2': return 'advanced_tier2';
+      case 'tier3': return 'advanced_tier3';
+      default: return 'advanced_match';
     }
   }
 
